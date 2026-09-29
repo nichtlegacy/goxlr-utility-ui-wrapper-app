@@ -31,6 +31,41 @@ fn get_icon() -> Option<Retained<NSImage>> {
     NSImage::initWithData(NSImage::alloc(), &data)
 }
 
+// Brings the app to the front, a daemon spawned process won't be given focus by default.
+#[allow(deprecated)]
+pub fn activate(mtm: MainThreadMarker) {
+    let ns_app = NSApplication::sharedApplication(mtm);
+    ns_app.activateIgnoringOtherApps(true);
+}
+
+// Runs the closure on the main thread, immediately if we're already on it.
+pub fn on_main<F: FnOnce(MainThreadMarker) + Send + 'static>(work: F) {
+    match MainThreadMarker::new() {
+        Some(mtm) => work(mtm),
+        None => Queue::main().exec_async(move || {
+            if let Some(mtm) = MainThreadMarker::new() {
+                work(mtm);
+            }
+        }),
+    }
+}
+
+// As above, but blocks the caller until the closure has completed.
+pub fn on_main_sync<T: Send, F: FnOnce(MainThreadMarker) -> T + Send>(work: F) -> Option<T> {
+    match MainThreadMarker::new() {
+        Some(mtm) => Some(work(mtm)),
+        None => {
+            let mut result = None;
+            Queue::main().exec_sync(|| {
+                if let Some(mtm) = MainThreadMarker::new() {
+                    result = Some(work(mtm));
+                }
+            });
+            result
+        }
+    }
+}
+
 pub fn hide_dock(mtm: MainThreadMarker) {
     let ns_app = NSApplication::sharedApplication(mtm);
     ns_app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
